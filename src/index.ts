@@ -6,8 +6,10 @@
  */
 
 import * as arrify from 'arrify';
+import {resolve} from 'dns';
 import {GoogleAuth, GoogleAuthOptions} from 'google-auth-library';
 import * as pify from 'pify';
+
 const {promisifyAll} = require('@google-cloud/promisify');
 
 export interface GCEImagesConfig extends GoogleAuthOptions {
@@ -131,26 +133,34 @@ export class GCEImages {
         this._parseArguments<GetOptions, GetAllCallback>(opts, cb);
     const osNamesToImages = new Map<string, Image[]>();
     options.osNames!.forEach(name => osNamesToImages.set(name, []));
-    const waits = Array.from(osNamesToImages.keys()).map(name => {
-      const singleOsOptions = Object.assign({}, options, {osNames: [name]});
-      const getAllByOS = pify(this._getAllByOS.bind(this));
-      return getAllByOS(singleOsOptions).then((images: Image[]) => {
-        osNamesToImages.set(name, images || []);
-      });
-    });
-    Promise.all(waits).then(() => {
-      if (options.osNames!.length === 1) {
-        callback(null, osNamesToImages.get(options.osNames![0]));
-      } else {
-        // convert the map into an object
-        const imageMap = Array.from(osNamesToImages)
-                             .reduce((obj: ImagesMap, [key, value]) => {
-                               obj[key] = value;
-                               return obj;
-                             }, {} as ImagesMap);
-        callback(null, imageMap);
-      }
-    });
+    const waits:Array<Promise<Image[]>> =
+        Array.from(osNamesToImages.keys()).map<Promise<Image[]>>(name => {
+          const singleOsOptions = Object.assign({}, options, {osNames: [name]});
+          const getAllByOS = pify(this._getAllByOS.bind(this));
+          return getAllByOS(singleOsOptions).then((images: Image[]) => {
+            osNamesToImages.set(name, images || []);
+          });
+        });
+
+    const promise =
+        Promise.all(waits).then(() => {
+          if (options.osNames!.length === 1) {
+            return osNamesToImages.get(options.osNames![0]) as Image[];
+          } else {
+            // convert the map into an object
+            const imageMap =
+                Array.from(osNamesToImages).reduce((obj: ImagesMap, [key, value]) => {
+                      obj[key] = value;
+                      return obj;
+                    }, {} as ImagesMap);
+            return imageMap;
+          }
+        });
+    if (!callback) {
+      return promise;
+    } else {
+      promise.then(([result]: Image[][]|ImagesMap[]) => callback(null, result));
+    }
   }
 
   /**
@@ -316,4 +326,4 @@ export class GCEImages {
   }
 }
 
-promisifyAll(GCEImages);
+// promisifyAll(GCEImages);
